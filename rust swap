@@ -1,0 +1,123 @@
+pub fn add_swap_in_amm_ins(
+        &mut self,
+        payer: &'a Keypair,
+        account_from: &'a Keypair,
+        from_mint: Pubkey,
+        to_mint: Pubkey,
+        input_amount: u64,
+        target_account: Pubkey,
+        serum_market: MarketState,
+    ) -> Result<&mut Self> {
+        let raydium_amm_address = &self.raydium_amm_address.unwrap();
+        let serum_program_address = &self.serum_program_address.unwrap();
+
+        let (amm_auhority, amm_authority_nonce) =
+            Pubkey::find_program_address(&["amm authority".as_bytes()], raydium_amm_address);
+
+        let market_id = u64_array_to_pubkey(serum_market.own_address);
+
+        let lp_mint = Pubkey::find_program_address(
+            &[
+                &raydium_amm_address.to_bytes(),
+                &market_id.to_bytes(),
+                "lp_mint_associated_seed".as_bytes(),
+            ],
+            raydium_amm_address,
+        )
+        .0;
+
+        let open_orders = Pubkey::find_program_address(
+            &[
+                &raydium_amm_address.to_bytes(),
+                &market_id.to_bytes(),
+                "open_order_associated_seed".as_bytes(),
+            ],
+            raydium_amm_address,
+        )
+        .0;
+
+        let target_orders = Pubkey::find_program_address(
+            &[
+                &raydium_amm_address.to_bytes(),
+                &market_id.to_bytes(),
+                "target_associated_seed".as_bytes(),
+            ],
+            raydium_amm_address,
+        )
+        .0;
+
+        let amm_id = Pubkey::find_program_address(
+            &[
+                &raydium_amm_address.to_bytes(),
+                &market_id.to_bytes(),
+                "amm_associated_seed".as_bytes(),
+            ],
+            &raydium_amm_address,
+        )
+        .0;
+
+        let coin_vault = Pubkey::find_program_address(
+            &[
+                &raydium_amm_address.to_bytes(),
+                &market_id.to_bytes(),
+                "coin_vault_associated_seed".as_bytes(),
+            ],
+            &raydium_amm_address,
+        )
+        .0;
+
+        let pc_vault = Pubkey::find_program_address(
+            &[
+                &raydium_amm_address.to_bytes(),
+                &market_id.to_bytes(),
+                "pc_vault_associated_seed".as_bytes(),
+            ],
+            &raydium_amm_address,
+        )
+        .0;
+
+        let user_from_token_address =
+            get_associated_token_address(&account_from.pubkey(), &from_mint);
+        let user_to_token_address = get_associated_token_address(&target_account, &to_mint);
+
+        self.add_create_spl_token_account_instruction_if_need(payer, &target_account, &to_mint)?;
+
+        let wsol = Pubkey::from_str(WSOL_MINT).unwrap();
+        if from_mint == wsol {
+            self.add_wrap_sol_ins(payer, input_amount)?;
+        }
+
+        let (vault_owner, vault_owner_nonce) =
+            get_vault_owner_and_nonce(&market_id, serum_program_address)?;
+
+        let swap_ins = raydium_contract_instructions::amm_instruction::swap_base_in(
+            raydium_amm_address,
+            &amm_id,
+            &amm_auhority,
+            &open_orders,
+            &target_orders,
+            &coin_vault,
+            &pc_vault,
+            serum_program_address,
+            &market_id,
+            &u64_array_to_pubkey(serum_market.bids),
+            &u64_array_to_pubkey(serum_market.asks),
+            &u64_array_to_pubkey(serum_market.event_q),
+            &u64_array_to_pubkey(serum_market.coin_vault),
+            &u64_array_to_pubkey(serum_market.pc_vault),
+            &vault_owner,
+            &user_from_token_address,
+            &user_to_token_address,
+            &payer.pubkey(),
+            input_amount,
+            0,
+        )?;
+
+        self.add_ins(swap_ins, vec![payer, account_from]);
+
+        if from_mint == wsol {
+            self.add_unwrap_sol_ins(account_from)?;
+        }
+
+        Ok(self)
+    }
