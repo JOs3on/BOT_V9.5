@@ -2,7 +2,7 @@ const { Connection, PublicKey, Keypair } = require('@solana/web3.js');
 const swapCreator = require('./swapCreator');
 const bs58 = require('bs58');
 const { MongoClient } = require('mongodb');
-require('dotenv').config();
+require('dotenv').config(); 
 
 class Sniper {
     constructor(cfg, fullLpData = null) {
