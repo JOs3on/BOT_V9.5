@@ -1,5 +1,5 @@
 const { Connection, PublicKey, Keypair } = require('@solana/web3.js');
-const { swapTokens } = require('./swapCreator');
+const swapCreator = require('./swapCreator');
 const bs58 = require('bs58');
 const { MongoClient } = require('mongodb');
 require('dotenv').config();
@@ -30,7 +30,7 @@ class Sniper {
         if (!this.fullLpData) throw new Error('LP data missing for buy phase');
         console.log(`[BUY] Swapping ${this.buyAmount} quote tokens for base`);
 
-        await swapTokens({
+        await swapCreator.swapTokens({
             lpData: this.fullLpData,
             amountSpecified: this.toLamports(this.buyAmount, this.quoteDecimals),
             swapBaseIn: false,
@@ -50,8 +50,8 @@ class Sniper {
                 // Convert to human-readable units
                 const quoteHuman = lamports / 10 ** this.quoteDecimals;
 
-                // Calculate current price using normalized K (UPDATED)
-                const priceNow = (quoteHuman * quoteHuman) / Number(this.K);
+                // Calculate current price using corrected formula
+                const priceNow = Number(this.K) / quoteHuman;
 
                 console.log(`[PRICE] ${this.tokenId}: ${priceNow} SOL`);
 
@@ -78,7 +78,7 @@ class Sniper {
         const lpData = await this.fetchFromMongo();
         console.log(`[SELL] price target hit – exiting position`);
 
-        await swapTokens({
+        await swapCreator.swapTokens({
             lpData,
             amountSpecified: await this.getTokenBalance(),
             swapBaseIn: true,
