@@ -1,5 +1,5 @@
 /*****************************************************************
- newRaydiumLpService.js – BOT 9.35  (K & V scaling fixed)
+ newRaydiumLpService.js – BOT 9.6  (K & V scaling fixed + SDK v2 compatibility)
  *****************************************************************/
 const { Connection, PublicKey } = require('@solana/web3.js');
 const { MongoClient } = require('mongodb');
@@ -107,12 +107,16 @@ async function processRaydiumLpTransaction(conn, sig) {
         const poolAcc = await conn.getAccountInfo(new PublicKey(ammId));
         if (!poolAcc) return null;
         const poolData = liquidityStateV4Layout.decode(poolAcc.data);
+
+        // Get LP token supply for decimals
+        const lpTokenSupply = await conn.getTokenSupply(new PublicKey(lpMint));
+
         Object.assign(td, {
             withdrawQueue: new PublicKey(poolData.withdrawQueue).toString(),
             lpVault: new PublicKey(poolData.lpVault).toString(),
             lpDecimals: poolData.lpDecimals !== undefined
                 ? Number(poolData.lpDecimals)
-                : (await conn.getTokenSupply(new PublicKey(lpMint))).value.decimals,
+                : lpTokenSupply.value.decimals,
             nonce: Number(poolData.nonce),
             openTime: poolData.poolOpenTime
                 ? poolData.poolOpenTime.toString()
@@ -152,7 +156,7 @@ async function processRaydiumLpTransaction(conn, sig) {
         td.isWSOLSwap = td.quoteMint === WSOL_MINT;
         if (td.isWSOLSwap) td.wrappedSOLAmount = initQuote;
 
-        /* ─── ADDED FOR SWAP SUPPORT ──────────────────────── */
+        /* ─── ADDED FOR SWAP SUPPORT (ORIGINAL) ──────────────────────── */
         // Token program ID (constant)
         td.tokenProgramId = TOKEN_PROGRAM_ID.toString();
 
@@ -177,7 +181,104 @@ async function processRaydiumLpTransaction(conn, sig) {
         // User SOL address from .env
         td.userSolAddress = USER_ADDRESS.toString();
 
+        /* ─── ADDITIONAL FIELDS FOR SDK V2 COMPATIBILITY ──────────── */
+
+        // Pool state fields from the AMM account
+        try {
+            // Add swap fee fields
+            td.swapFeeNumerator = Number(poolData.swapFeeNumerator) || 25;
+            td.swapFeeDenominator = Number(poolData.swapFeeDenominator) || 10000;
+
+            // Add owner fee fields
+            td.ownerTradeFeeNumerator = Number(poolData.ownerTradeFeeNumerator) || 5;
+            td.ownerTradeFeeDenominator = Number(poolData.ownerTradeFeeDenominator) || 10000;
+            td.ownerWithdrawFeeNumerator = Number(poolData.ownerWithdrawFeeNumerator) || 0;
+            td.ownerWithdrawFeeDenominator = Number(poolData.ownerWithdrawFeeDenominator) || 10000;
+
+            // Pool status and state
+            td.status = Number(poolData.status) || 6; // 6 = SwapOnly for most pools
+            td.state = Number(poolData.state) || 1;   // 1 = Initialized
+
+            // Reset flag
+            td.resetFlag = Number(poolData.resetFlag) || 0;
+
+            // Min size and order count
+            td.minSize = poolData.minSize ? poolData.minSize.toString() : '1';
+            td.volMaxCutRatio = poolData.volMaxCutRatio ? poolData.volMaxCutRatio.toString() : '0';
+            td.pnlNumerator = poolData.pnlNumerator ? poolData.pnlNumerator.toString() : '0';
+            td.pnlDenominator = poolData.pnlDenominator ? poolData.pnlDenominator.toString() : '1';
+
+            // Depth and order book info
+            td.depth = poolData.depth ? poolData.depth.toString() : '0';
+            td.coinDeposited = poolData.coinDeposited ? poolData.coinDeposited.toString() : initBase;
+            td.pcDeposited = poolData.pcDeposited ? poolData.pcDeposited.toString() : initQuote;
+
+            // Additional AMM fields that might be needed
+            td.systemDecimalsValue = Number(poolData.systemDecimalsValue) || 6;
+
+            // Pool creation time
+            td.poolOpenTime = poolData.poolOpenTime ? poolData.poolOpenTime.toString() : Math.floor(Date.now() / 1000).toString();
+
+        } catch (error) {
+            console.warn('[LP Service] Warning: Could not extract all pool data fields:', error.message);
+            // Set default values if pool data extraction fails
+            td.swapFeeNumerator = 25;
+            td.swapFeeDenominator = 10000;
+            td.ownerTradeFeeNumerator = 5;
+            td.ownerTradeFeeDenominator = 10000;
+            td.ownerWithdrawFeeNumerator = 0;
+            td.ownerWithdrawFeeDenominator = 10000;
+            td.status = 6;
+            td.state = 1;
+            td.resetFlag = 0;
+            td.minSize = '1';
+            td.volMaxCutRatio = '0';
+            td.pnlNumerator = '0';
+            td.pnlDenominator = '1';
+            td.depth = '0';
+            td.coinDeposited = initBase;
+            td.pcDeposited = initQuote;
+            td.systemDecimalsValue = 6;
+            td.poolOpenTime = Math.floor(Date.now() / 1000).toString();
+        }
+
+        // Market authority - if not already computed, derive it
+        if (!td.marketAuthority || td.marketAuthority === 'undefined') {
+            try {
+                // Try to derive market authority from market ID and program
+                const [derivedMarketAuth] = PublicKey.findProgramAddressSync(
+                    [new PublicKey(td.marketId).toBuffer()],
+                    new PublicKey(td.marketProgramId)
+                );
+                td.marketAuthority = derivedMarketAuth.toString();
+            } catch (error) {
+                console.warn('[LP Service] Could not derive market authority, using vault owner');
+                td.marketAuthority = td.vaultOwner;
+            }
+        }
+
+        // Lookup table account (set to default/empty for most cases)
+        td.lookupTableAccount = PublicKey.default.toString();
+
+        // Route type for SDK
+        td.routeType = 'amm';
+
+        // Additional metadata for the newer SDK
+        td.sdkVersion = '2';
+        td.ammVersion = 4;
+        td.createdAt = new Date().toISOString();
+        td.signature = sig;
+
         /* ────────────────────────────────────────────────── */
+
+        console.log('[LP Service] Processed token data with SDK v2 compatibility fields');
+        console.log('  - ammId:', td.ammId);
+        console.log('  - baseMint:', td.baseMint);
+        console.log('  - quoteMint:', td.quoteMint);
+        console.log('  - lpMint:', td.lpMint);
+        console.log('  - withdrawQueue:', td.withdrawQueue);
+        console.log('  - lpVault:', td.lpVault);
+        console.log('  - routeType:', td.routeType);
 
         const { insertedId } = await (await connectDB())
             .collection('raydium_lp_transactionsV3')
