@@ -2,7 +2,10 @@ const { Connection, PublicKey, Keypair } = require('@solana/web3.js');
 const swapCreator = require('./swapCreator');
 const bs58 = require('bs58');
 const { MongoClient } = require('mongodb');
-require('dotenv').config(); 
+require('dotenv').config();
+
+// Added constant for WSOL mint
+const WSOL_MINT = 'So11111111111111111111111111111111111111112';
 
 class Sniper {
     constructor(cfg, fullLpData = null) {
@@ -30,11 +33,14 @@ class Sniper {
         if (!this.fullLpData) throw new Error('LP data missing for buy phase');
         console.log(`[BUY] Swapping ${this.buyAmount} quote tokens for base`);
 
+        // Added WSOL flags for swap
         await swapCreator.swapTokens({
             lpData: this.fullLpData,
             amountSpecified: this.toLamports(this.buyAmount, this.quoteDecimals),
             swapBaseIn: false,
-            owner: this.owner
+            owner: this.owner,
+            isInputSOL: this.fullLpData.quoteMint === WSOL_MINT,
+            isOutputSOL: this.fullLpData.baseMint === WSOL_MINT
         });
 
         // Free memory
@@ -78,11 +84,14 @@ class Sniper {
         const lpData = await this.fetchFromMongo();
         console.log(`[SELL] price target hit – exiting position`);
 
+        // Added WSOL flags for swap
         await swapCreator.swapTokens({
             lpData,
             amountSpecified: await this.getTokenBalance(),
             swapBaseIn: true,
-            owner: this.owner
+            owner: this.owner,
+            isInputSOL: lpData.baseMint === WSOL_MINT,
+            isOutputSOL: lpData.quoteMint === WSOL_MINT
         });
     }
 
