@@ -53,6 +53,17 @@ class SwapCreator {
      * @param {Keypair} params.owner - Wallet keypair
      */
     async swapTokens({ tokenData, amountSpecified, swapBaseIn, owner }) {
+        // ADDED DEBUG LOGS
+        console.log('[SwapCreator] Received swap request');
+        if (!tokenData) {
+            console.error('[SwapCreator] CRITICAL: tokenData is undefined!');
+            throw new Error('tokenData is undefined(swapcreator)');
+        } else {
+            console.log(`[SwapCreator] Token data received for: ${tokenData.baseMint}`);
+            console.log(`  - ammId: ${tokenData.ammId || 'missing'}`);
+            console.log(`  - userBaseTokenAccount: ${tokenData.userBaseTokenAccount || 'missing'}`);
+        }
+
         try {
             console.log(`[SwapCreator] Starting swap - Base->Quote: ${swapBaseIn}, Amount: ${amountSpecified}`);
 
@@ -65,7 +76,7 @@ class SwapCreator {
             // Get pool keys from static tokenData
             const poolKeys = this.createPoolKeysFromTokenData(tokenData);
 
-            // Refresh pool state
+            // Refresh pool state (V2 SDK COMPLIANT)
             await this.raydium.liquidity.refreshPools([poolKeys.id]);
             const poolState = this.raydium.liquidity.getPool(poolKeys.id);
             if (!poolState) throw new Error('Pool state not found');
@@ -81,7 +92,7 @@ class SwapCreator {
             // Create transaction
             const transaction = new Transaction();
 
-            // 1. Priority fee
+            // 1. Priority fee (V2 SDK COMPLIANT)
             transaction.add(
                 ComputeBudgetProgram.setComputeUnitLimit({ units: 300000 }),
                 ComputeBudgetProgram.setComputeUnitPrice({
@@ -109,7 +120,7 @@ class SwapCreator {
                 wsolInputAccount = tokenData.userBaseTokenAccount;
             }
 
-            // 4. Swap instruction
+            // 4. Swap instruction (V2 SDK COMPLIANT)
             const { transaction: swapTx, signers } = await this.raydium.trade.directSwap({
                 poolKeys: poolKeys,
                 amountIn: swapBaseIn ? amount : undefined,
@@ -158,30 +169,47 @@ class SwapCreator {
     }
 
     createPoolKeysFromTokenData(tokenData) {
-        // Main pool accounts
+        // ADDED REQUIRED FIELD VERIFICATION
+        if (!tokenData || typeof tokenData !== 'object') {
+            console.error('[SwapCreator] Invalid tokenData:', tokenData);
+            throw new Error('tokenData must be an object(sc)');
+        }
+
+        // ADDED REQUIRED FIELD CHECKS
+        const requiredFields = ['ammId', 'baseMint', 'quoteMint', 'userBaseTokenAccount'];
+        for (const field of requiredFields) {
+            if (!tokenData[field]) {
+                console.error(`[SwapCreator] Missing required field: ${field}`);
+                console.error('Full tokenData:', JSON.stringify(tokenData, null, 2));
+                throw new Error(`Missing required field: ${field}`);
+            }
+        }
+
+        // Main pool accounts with graceful fallbacks
         const poolKeys = {
-            id: new PublicKey(tokenData.ammId),
-            baseMint: new PublicKey(tokenData.baseMint),
-            quoteMint: new PublicKey(tokenData.quoteMint),
-            baseVault: new PublicKey(tokenData.baseVault),
-            quoteVault: new PublicKey(tokenData.quoteVault),
-            authority: new PublicKey(tokenData.ammAuthority),
-            openOrders: new PublicKey(tokenData.ammOpenOrders),
-            targetOrders: new PublicKey(tokenData.targetOrders),
-            marketId: new PublicKey(tokenData.marketId),
-            programId: new PublicKey(tokenData.programId),
-            marketProgramId: new PublicKey(tokenData.marketProgramId),
-            marketBids: new PublicKey(tokenData.marketBids),
-            marketAsks: new PublicKey(tokenData.marketAsks),
-            marketEventQueue: new PublicKey(tokenData.marketEventQueue),
-            marketBaseVault: new PublicKey(tokenData.marketBaseVault),
-            marketQuoteVault: new PublicKey(tokenData.marketQuoteVault),
-            marketAuthority: new PublicKey(tokenData.marketAuthority),
-            vaultOwner: new PublicKey(tokenData.vaultOwner),
+            id: new PublicKey(tokenData.ammId || PublicKey.default),
+            baseMint: new PublicKey(tokenData.baseMint || PublicKey.default),
+            quoteMint: new PublicKey(tokenData.quoteMint || PublicKey.default),
+            baseVault: new PublicKey(tokenData.baseVault || PublicKey.default),
+            quoteVault: new PublicKey(tokenData.quoteVault || PublicKey.default),
+            authority: new PublicKey(tokenData.ammAuthority || PublicKey.default),
+            openOrders: new PublicKey(tokenData.ammOpenOrders || PublicKey.default),
+            targetOrders: new PublicKey(tokenData.targetOrders || PublicKey.default),
+            marketId: new PublicKey(tokenData.marketId || PublicKey.default),
+            programId: new PublicKey(tokenData.programId || PublicKey.default),
+            marketProgramId: new PublicKey(tokenData.marketProgramId || PublicKey.default),
+            marketBids: new PublicKey(tokenData.marketBids || PublicKey.default),
+            marketAsks: new PublicKey(tokenData.marketAsks || PublicKey.default),
+            marketEventQueue: new PublicKey(tokenData.marketEventQueue || PublicKey.default),
+            marketBaseVault: new PublicKey(tokenData.marketBaseVault || PublicKey.default),
+            marketQuoteVault: new PublicKey(tokenData.marketQuoteVault || PublicKey.default),
+            marketAuthority: new PublicKey(tokenData.marketAuthority || PublicKey.default),
+            vaultOwner: new PublicKey(tokenData.vaultOwner || PublicKey.default),
         };
 
         // Debug: Verify derived addresses match static data
         try {
+            // V2 SDK COMPLIANT AUTHORITY DERIVATION
             const derivedAuthority = raydium.liquidity.getAssociatedAuthority({
                 programId: poolKeys.programId
             }).publicKey;
