@@ -26,25 +26,40 @@ class Sniper {
         this.fullLpData = fullLpData;      // cleared after buy
         this.vaultSubId = null;
         this.db         = null;
+
+        // ADDED CONSTRUCTOR DEBUG LOG
+        console.log('[Sniper] Created for token:', this.baseMint);
     }
 
     /* ------------ BUY ONCE ---------------- */
     async executeBuy() {
         if (!this.fullLpData) throw new Error('LP data missing for buy phase');
+
+        // KEEP EXISTING DEBUG LOGS
+        console.log('[DEBUG] Full LP data:', this.fullLpData);
         console.log(`[BUY] Swapping ${this.buyAmount} quote tokens for base`);
 
-        // Added WSOL flags for swap
-        await swapCreator.swapTokens({
-            lpData: this.fullLpData,
-            amountSpecified: this.toLamports(this.buyAmount, this.quoteDecimals),
-            swapBaseIn: false,
-            owner: this.owner,
-            isInputSOL: this.fullLpData.quoteMint === WSOL_MINT,
-            isOutputSOL: this.fullLpData.baseMint === WSOL_MINT
+        // ADDED TARGETED DEBUG LOG
+        console.log('[Sniper] Executing buy with tokenData:', {
+            ammId: this.fullLpData.ammId,
+            baseMint: this.fullLpData.baseMint,
+            userBaseTokenAccount: this.fullLpData.userBaseTokenAccount
         });
 
-        // Free memory
-        this.fullLpData = null;
+        try {
+            await swapCreator.swapTokens({
+                tokenData: this.fullLpData,
+                amountSpecified: this.toLamports(this.buyAmount, this.quoteDecimals),
+                swapBaseIn: false,
+                owner: this.owner,
+                isInputSOL: this.fullLpData.quoteMint === WSOL_MINT,
+                isOutputSOL: this.fullLpData.baseMint === WSOL_MINT,
+                source: 'executeBuy'
+            });
+        } finally {
+            // Free memory even if swap fails (FIXED MEMORY CLEARING)
+            this.fullLpData = null;
+        }
     }
 
     /* ------------ LIVE PRICE WATCHER ---------------- */
@@ -82,11 +97,26 @@ class Sniper {
     async executeSell() {
         // pull fresh LP doc (we cleared it after buy)
         const lpData = await this.fetchFromMongo();
-        console.log(`[SELL] price target hit – exiting position`);
 
-        // Added WSOL flags for swap
+        // Validation check
+        if (!lpData) {
+            throw new Error('Failed to fetch LP data from MongoDB');
+        }
+
+        // KEEP EXISTING DEBUG LOGS
+        console.log('[DEBUG] Fetched LP data:', lpData);
+        console.log('[SELL] price target hit – exiting position');
+
+        // ADDED TARGETED DEBUG LOG
+        console.log('[Sniper] Executing sell with tokenData:', {
+            ammId: lpData.ammId,
+            baseMint: lpData.baseMint,
+            userBaseTokenAccount: lpData.userBaseTokenAccount
+        });
+
+        // FIXED PARAMETER NAME: lpData → tokenData
         await swapCreator.swapTokens({
-            lpData,
+            tokenData: lpData, // ✅ Corrected parameter name
             amountSpecified: await this.getTokenBalance(),
             swapBaseIn: true,
             owner: this.owner,
